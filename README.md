@@ -1,37 +1,26 @@
-# Purpose of This Repo
+# Agentic AI Nanodegree 
 
-This repo is meant to be used to keep things organized during content development and act as the source of truth for all projects and exercises related to this course.
+This repository contains my notes, exercises, and projects completed as part of the **[Agentic AI Nanodegree](https://www.udacity.com/enrollment/nd900)** program.
 
-## Folder Structure
+---
+## 🧠 Purpose
 
-### Lesson Folder
+This repository serves as my personal learning record — a place to document my progress, summarize key concepts, and track the work I complete throughout the nanodegree.
 
-This repo contains a folder for each `lesson` and one `project` folder.
+---
+## 📚 Courses in This Program
 
-Example
-```
-lesson-1-hello
-lesson-2-world
-lesson-3-foo
-lesson-4-bar
-project
-```
+1. **Prompting for Effective LLM Reasoning and Planning**  
+2. **Agentic Workflows**  
+3. **Building Agents**  
+4. **Multi-Agent Systems**
 
-Each `lesson` folder is named using the naming convention of `lesson-#-name-of-lesson`.
+---
+## ⚖️ Attribution
 
-Example
-```
-lesson-1-hello
-```
+All course materials, project descriptions, and starter code are provided by **Udacity** as part of the [Data Scientist Nanodegree (ND900)](https://www.udacity.com/enrollment/nd900).  
+This repository is **for personal educational purposes only**.  
+Any content derived from Udacity’s materials is properly credited to Udacity.
+---
+✨ *Made with curiosity and continuous learning.*
 
-Four lesson folders have been provided as a template; However, you may need to add more or possibly use less than four depending on what is needed.
-
-If you require an additional lesson folder, you can make a copy of the folder and paste it into the root directory.
-
-### Exercises Folder
-
-Each `lesson` folder contains an `exercises` folder. This `exercises` folder should contain all files and instructions necessary for the exercises along with the solution. The solutions for these exercises will be shared with students. See the `README` in the `exercises` folder for information about folder structure.
-
-### Project Folder
-
-The `project` folder should contain all files and instructions necessary for setup. If possible, a set of instructions should be provided for both Udacity workspaces and a way to work locally (for both MacOS and Windows OS). At a minimum, one set of instructions should be provided. A `README` template has been provided in the project folder. This template layout should be used to write your README.
