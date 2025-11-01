@@ -16,7 +16,7 @@ This repository serves as my personal learning record — a place to document my
 4. **Multi-Agent Systems**
 
 ---
-## ⚖️ Attribution
+### ⚖️ Attribution
 
 All course materials, project descriptions, and starter code are provided by **Udacity** as part of the [Data Scientist Nanodegree (ND900)](https://www.udacity.com/enrollment/nd900).  
 This repository is **for personal educational purposes only**.  
