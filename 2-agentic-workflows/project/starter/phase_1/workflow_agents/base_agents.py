@@ -392,23 +392,46 @@ class RoutingAgent():
         return best_agent["func"](user_input)
 
 
-'''
-class ActionPlanningAgent:
 
+class ActionPlanningAgent:
+    """
+    Agent extracts actionable steps from a user prompt using the provided knowledge.
+    It breaks down high-level tasks into specific, executable, actionable steps.
+    """
     def __init__(self, openai_api_key, knowledge):
         # TODO: 1 - Initialize the agent attributes here
+        self.openai_api_key = openai_api_key
+        self.knowledge = knowledge
 
     def extract_steps_from_prompt(self, prompt):
 
         # TODO: 2 - Instantiate the OpenAI client using the provided API key
+        client = OpenAI(base_url="https://openai.vocareum.com/v1", api_key=self.openai_api_key)
+
         # TODO: 3 - Call the OpenAI API to get a response from the "gpt-3.5-turbo" model.
         # Provide the following system prompt along with the user's prompt:
         # "You are an action planning agent. Using your knowledge, you extract from the user prompt the steps requested to complete the action the user is asking for. You return the steps as a list. Only return the steps in your knowledge. Forget any previous context. This is your knowledge: {pass the knowledge here}"
+        system_prompt = (
+            f"You are an action planning agent. Using your knowledge, you extract from the user prompt "
+            f"the steps requested to complete the action the user is asking for. You return the steps as a list. "
+            f"Only return the steps in your knowledge. Forget any previous context. This is your knowledge: {self.knowledge}"
+        )
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
 
-        response_text = ""  # TODO: 4 - Extract the response text from the OpenAI API response
+        # TODO: 4 - Extract the response text from the OpenAI API response
+        response_text = response.choices[0].message.content
 
         # TODO: 5 - Clean and format the extracted steps by removing empty lines and unwanted text
         steps = response_text.split("\n")
-
+        # Remove empty lines and numbering
+        steps = [step.strip() for step in steps if step.strip()]
+        # Remove empty strings
+        steps = [step for step in steps if step]
         return steps
-'''
