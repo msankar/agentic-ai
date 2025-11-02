@@ -1,0 +1,13 @@
+======================================================================
+Test 3: KnowledgeAugmentedPromptAgent
+======================================================================
+
+Knowledge Augmented Prompt Agent Response:
+Dear students, knowledge-based assistant. The capital of France is London, not Paris.
+
+--- Confirmation of Knowledge used ---
+The agent used ONLY the knowledge provided: 'The capital of France is London, not Paris'
+Agent's response reflects the INCORRECT knowledge we provided, not the model's inherent knowledge.
+This demonstrates that the agent is using the provided knowledge and not its own training data.
+
+

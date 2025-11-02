@@ -1,0 +1,12 @@
+======================================================================
+Test 2: AugmentedPromptAgent
+======================================================================
+
+Augmented Prompt Agent Response:
+Paris
+
+--- Knowledge Source and Persona Impact ---
+Knowledge Source: The agent used the general knowledge used in training the LLM model (gpt-3.5-turbo).
+Persona Impact: The professor persona specified caused the agent to adopt a professorial tone and format.
+As instructed the response starts with 'Dear students,' - influenced by the persona. It shaped HOW and not WHAT information was delivered
+

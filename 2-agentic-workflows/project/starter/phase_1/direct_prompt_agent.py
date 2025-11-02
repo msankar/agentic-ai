@@ -21,11 +21,11 @@ direct_agent = DirectPromptAgent(openai_api_key)
 direct_agent_response = direct_agent.respond(prompt)
 
 # Print the response from the agent
-print("\n Direct Prompt Agent Response:")
+print("\nDirect Prompt Agent Response:")
 print(direct_agent_response)
 
 # TODO: 5 - Print an explanatory message describing the knowledge source used by the agent to generate the response
 print("\n--- Knowledge Source Explanation ---")
 print("The DirectPromptAgent uses the general knowledge used for training the LLM model (gpt-3.5-turbo).")
-print("No other external knowledge base or custom context is used - just the model's pre-trained knowledge.")
+print("No external knowledge base or custom context is used - only the model's pre-trained knowledge.")
 print()

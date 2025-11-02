@@ -1,15 +1,18 @@
 # agentic_workflow.py
 
 # TODO: 1 - Import the following agents: ActionPlanningAgent, KnowledgeAugmentedPromptAgent, EvaluationAgent, RoutingAgent from the workflow_agents.base_agents module
-
+from workflow_agents.base_agents import ActionPlanningAgent, KnowledgeAugmentedPromptAgent, EvaluationAgent, RoutingAgent
 import os
 from dotenv import load_dotenv
 
 # TODO: 2 - Load the OpenAI key into a variable called openai_api_key
+load_dotenv()
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # load the product spec
 # TODO: 3 - Load the product spec document Product-Spec-Email-Router.txt into a variable called product_spec
-
+with open("Product-Spec-Email-Router.txt", "r") as f:
+    product_spec = f.read()
 # Instantiate all the agents
 
 # Action Planning Agent
@@ -24,6 +27,7 @@ knowledge_action_planning = (
     "A development Plan for a product contains all these components"
 )
 # TODO: 4 - Instantiate an action_planning_agent using the 'knowledge_action_planning'
+action_planning_agent = ActionPlanningAgent(openai_api_key, knowledge_action_planning)
 
 # Product Manager - Knowledge Augmented Prompt Agent
 persona_product_manager = "You are a Product Manager, you are responsible for defining the user stories for a product."
@@ -32,6 +36,7 @@ knowledge_product_manager = (
     "The sentences always start with: As a "
     "Write several stories for the product spec below, where the personas are the different users of the product. "
     # TODO: 5 - Complete this knowledge string by appending the product_spec loaded in TODO 3
+    + product_spec
 )
 # TODO: 6 - Instantiate a product_manager_knowledge_agent using 'persona_product_manager' and the completed 'knowledge_product_manager'
 

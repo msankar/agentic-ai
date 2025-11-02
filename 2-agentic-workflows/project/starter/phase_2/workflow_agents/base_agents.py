@@ -272,7 +272,7 @@ class EvaluationAgent:
 
             print(" Step 1: Worker agent generates a response to the prompt")
             print(f"Prompt:\n{prompt_to_evaluate}")
-            response_from_worker = self.worker_agent.respond(prompt_to_evaluate) # TODO: 3 - Obtain a response from the worker agent
+            response_from_worker = self.agent_to_evaluate.respond(prompt_to_evaluate) # TODO: 3 - Obtain a response from the worker agent
             print(f"Worker Agent Response:\n{response_from_worker}")
 
             print(" Step 2: Evaluator agent judges the response")
