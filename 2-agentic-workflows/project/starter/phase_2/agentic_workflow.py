@@ -39,16 +39,28 @@ knowledge_product_manager = (
     + product_spec
 )
 # TODO: 6 - Instantiate a product_manager_knowledge_agent using 'persona_product_manager' and the completed 'knowledge_product_manager'
+product_manager_knowledge_agent = KnowledgeAugmentedPromptAgent(openai_api_key, persona_product_manager, knowledge_product_manager)
 
 # Product Manager - Evaluation Agent
 # TODO: 7 - Define the persona and evaluation criteria for a Product Manager evaluation agent and instantiate it as product_manager_evaluation_agent. This agent will evaluate the product_manager_knowledge_agent.
 # The evaluation_criteria should specify the expected structure for user stories (e.g., "As a [type of user], I want [an action or feature] so that [benefit/value].").
+persona_product_manager_eval = "You are an evaluation agent that checks the answers of other worker agents"
+evaluation_criteria_product_manager = "The answer should be stories that follow the following structure: As a [type of user], I want [an action or feature] so that [benefit/value]."
+#Pass the product_manager_knowledge_agent as the agent_to_evaluate parameter during instantiation.
+product_manager_evaluation_agent = EvaluationAgent(
+    openai_api_key,
+    persona_product_manager_eval,
+    evaluation_criteria_product_manager,
+    product_manager_knowledge_agent,
+    max_interactions=10
+)
 
 # Program Manager - Knowledge Augmented Prompt Agent
 persona_program_manager = "You are a Program Manager, you are responsible for defining the features for a product."
 knowledge_program_manager = "Features of a product are defined by organizing similar user stories into cohesive groups."
 # Instantiate a program_manager_knowledge_agent using 'persona_program_manager' and 'knowledge_program_manager'
 # (This is a necessary step before TODO 8. Students should add the instantiation code here.)
+program_manager_knowledge_agent = KnowledgeAugmentedPromptAgent(openai_api_key, persona_program_manager, knowledge_program_manager)
 
 # Program Manager - Evaluation Agent
 persona_program_manager_eval = "You are an evaluation agent that checks the answers of other worker agents."
@@ -60,12 +72,28 @@ persona_program_manager_eval = "You are an evaluation agent that checks the answ
 #                      "Key Functionality: The specific capabilities or actions the feature provides\n" \
 #                      "User Benefit: How this feature creates value for the user"
 # For the 'agent_to_evaluate' parameter, refer to the provided solution code's pattern.
+evaluation_criteria_program_manager = (
+    "The answer should be product features that follow the following structure: "
+    "Feature Name: A clear, concise title that identifies the capability\n"
+    "Description: A brief explanation of what the feature does and its purpose\n"
+    "Key Functionality: The specific capabilities or actions the feature provides\n"
+    "User Benefit: How this feature creates value for the user"
+)
+program_manager_evaluation_agent = EvaluationAgent(
+    openai_api_key,
+    persona_program_manager_eval,
+    evaluation_criteria_program_manager,
+    program_manager_knowledge_agent,
+    max_interactions=10
+)
+
 
 # Development Engineer - Knowledge Augmented Prompt Agent
 persona_dev_engineer = "You are a Development Engineer, you are responsible for defining the development tasks for a product."
 knowledge_dev_engineer = "Development tasks are defined by identifying what needs to be built to implement each user story."
 # Instantiate a development_engineer_knowledge_agent using 'persona_dev_engineer' and 'knowledge_dev_engineer'
 # (This is a necessary step before TODO 9. Students should add the instantiation code here.)
+development_engineer_knowledge_agent = KnowledgeAugmentedPromptAgent(openai_api_key, persona_dev_engineer, knowledge_dev_engineer)
 
 # Development Engineer - Evaluation Agent
 persona_dev_engineer_eval = "You are an evaluation agent that checks the answers of other worker agents."
@@ -79,6 +107,23 @@ persona_dev_engineer_eval = "You are an evaluation agent that checks the answers
 #                      "Estimated Effort: Time or complexity estimation\n" \
 #                      "Dependencies: Any tasks that must be completed first"
 # For the 'agent_to_evaluate' parameter, refer to the provided solution code's pattern.
+evaluation_criteria_dev_engineer = (
+    "The answer should be tasks following this exact structure: "
+    "Task ID: A unique identifier for tracking purposes\n"
+    "Task Title: Brief description of the specific development work\n"
+    "Related User Story: Reference to the parent user story\n"
+    "Description: Detailed explanation of the technical work required\n"
+    "Acceptance Criteria: Specific requirements that must be met for completion\n"
+    "Estimated Effort: Time or complexity estimation\n"
+    "Dependencies: Any tasks that must be completed first"
+)
+development_engineer_evaluation_agent = EvaluationAgent(
+    openai_api_key,
+    persona_dev_engineer_eval,
+    evaluation_criteria_dev_engineer,
+    development_engineer_knowledge_agent,
+    max_interactions=10
+)
 
 
 # Routing Agent
@@ -91,6 +136,48 @@ persona_dev_engineer_eval = "You are an evaluation agent that checks the answers
 #   2. Get a response from the respective Knowledge Augmented Prompt Agent.
 #   3. Have the response evaluated by the corresponding Evaluation Agent.
 #   4. Return the final validated response.
+
+def product_manager_support_function(query):
+    """Support function for Product Manager agent."""
+    print(f"\n[Product Manager] Processing query: {query[:100]}...")
+    # Get response from the Product Manager Knowledge Agent
+    result = product_manager_evaluation_agent.evaluate(query)
+    return result['final_response']
+
+def program_manager_support_function(query):
+    """Support function for Program Manager agent."""
+    print(f"\n[Program Manager] Processing query: {query[:100]}...")
+    # Get response from the Program Manager Knowledge Agent
+    result = program_manager_evaluation_agent.evaluate(query)
+    return result['final_response']
+
+def development_engineer_support_function(query):
+    """Support function for Development Engineer agent."""
+    print(f"\n[Development Engineer] Processing query: {query[:100]}...")
+    # Get response from the Development Engineer Knowledge Agent
+    result = development_engineer_evaluation_agent.evaluate(query)
+    return result['final_response']
+
+# Instantiate the routing agent with defined routes. You will need to define a list of agent dictionaries (routes) for Product Manager, Program Manager, and Development Engineer. Each dictionary should contain 'name', 'description', and 'func' (linking to a support function). Assign this list to the routing_agent's 'agents' attribute.
+
+routes = [
+    {
+        "name": "Product Manager",
+        "description": "Defines user stories for a product.",
+        "func": product_manager_support_function
+    },
+    {
+        "name": "Program Manager",
+        "description": "Defines features for a product.",
+        "func": program_manager_support_function
+    },
+    {
+        "name": "Development Engineer",
+        "description": "Defines development tasks for a product.",
+        "func": development_engineer_support_function
+    }
+]
+routing_agent = RoutingAgent(openai_api_key, agents=routes)
 
 # Run the workflow
 
@@ -110,3 +197,45 @@ print("\nDefining workflow steps from the workflow prompt")
 #      b. Append the result to 'completed_steps'.
 #      c. Print information about the step being executed and its result.
 #   4. After the loop, print the final output of the workflow (the last completed step).
+
+#   1. Use the 'action_planning_agent' to extract steps from the 'workflow_prompt'.
+workflow_steps = action_planning_agent.extract_steps_from_prompt(workflow_prompt)
+print(f"\nWorkflow Steps Identified ({len(workflow_steps)} steps):")
+for i, step in enumerate(workflow_steps, 1):
+    print(f"  {i}. {step}")
+
+#   2. Initialize an empty list to store 'completed_steps'.
+completed_steps = []
+
+#   3. Loop through the extracted workflow steps:
+print("\n" + "-"*50)
+print("START WORKFLOW EXECUTION")
+print("-"*50)
+
+for i, step in enumerate(workflow_steps, 1):
+    print(f"\n{'-' * 50}")
+    print(f"STEP {i}/{len(workflow_steps)}: {step}")
+    print(f"{'-' * 50}")
+
+    # 3.a. For each step, use the 'routing_agent' to route the step to the appropriate support function.
+    result = routing_agent.route(step)
+
+    #  3.b. Append the result to 'completed_steps'.
+    completed_steps.append({
+        "step": step,
+        "result": result
+    })
+
+    #3.c.Print information about the step being executed and its result.
+    print(f"\n[STEP {i} COMPLETED]")
+    print("-" * 50)
+    print("Result Preview:")
+    print(result)
+    print("-" * 50)
+
+# 4. After the loop, Print final output of the workflow
+print("\n" + "-" * 50)
+print("END WORKFLOW EXECUTION")
+print("-" * 50)
+
+print(f"\nTotal Steps Completed: {len(completed_steps)}")
