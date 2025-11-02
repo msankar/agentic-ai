@@ -18,9 +18,9 @@ This repository serves as my personal learning record — a place to document my
 ---
 ### ⚖️ Attribution
 
-All course materials, project descriptions, and starter code are provided by **Udacity** as part of the [Data Scientist Nanodegree (ND900)](https://www.udacity.com/enrollment/nd900).  
-This repository is **for personal educational purposes only**.  
-Any content derived from Udacity’s materials is properly credited to Udacity.
+All course materials, project descriptions, and starter code are provided by Udacity as part of the [Agentic AI Nanodegree](https://www.udacity.com/enrollment/nd900).  
+This repository is for personal educational purposes only.  
+Any content derived from Udacity’s materials is credited to Udacity.
 ---
 ✨ *Made with curiosity and continuous learning.*
 
