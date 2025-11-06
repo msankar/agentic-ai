@@ -11,7 +11,6 @@ from lib.messages import (
 from lib.tooling import Tool
 
 
-
 class LLM:
     def __init__(
         self,
@@ -22,14 +21,7 @@ class LLM:
     ):
         self.model = model
         self.temperature = temperature
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        base_url = os.getenv("OPENAI_API_BASE", "https://api.vocareum.openai.com/v1")
-        key = api_key or os.getenv("OPENAI_API_KEY")
-
-        self.client = OpenAI(api_key=key, base_url=base_url)
-        #self.client = OpenAI(api_key=api_key) if api_key else OpenAI()
+        self.client = OpenAI(api_key=api_key) if api_key else OpenAI()
         self.tools: Dict[str, Tool] = {
             tool.name: tool for tool in (tools or [])
         }
