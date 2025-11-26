@@ -1,32 +1,32 @@
-# Purpose of This Repo
+# Course 4: Multi-Agent Systems
 
-This repo is meant to be used to keep things organized during content development and act as the source of truth for demos and exercises related to this course.
+## Overview
+This course focuses on the design and implementation of multi-agent systems, where multiple autonomous agents work together to solve complex problems. You will learn how to create coordinated teams of AI agents that can perform tasks collaboratively, manage data flow, and handle state coordination.
 
-## Folder Structure
+## Course Structure
+The course is divided into several key sections:
 
-### Lesson Folder
+1. **Introduction to Multi-Agent Systems**
+   - Understand the fundamentals of multi-agent systems and their applications in various domains.
 
-This repo contains a folder for each `lesson`.
+2. **Agent Architecture and Design**
+   - Learn about different architectures for multi-agent systems, including reactive, deliberative, and hybrid approaches.
 
-Example
-```
-lesson-1-hello
-lesson-2-world
-lesson-3-foo
-lesson-4-bar
-```
+3. **Agent Communication**
+   - Explore communication protocols and languages used for agent interaction, including message passing and shared knowledge bases.
 
-Each `lesson` folder is named using the naming convention of `lesson-#-name-of-lesson`.
+4. **Coordination and Collaboration**
+   - Study techniques for coordinating agents to work together effectively, including task allocation and negotiation strategies.
 
-Example
-```
-lesson-1-hello
-```
+5. **Implementation in Python**
+   - Gain hands-on experience implementing multi-agent systems using Python, including libraries and frameworks that facilitate development.
 
-Four lesson folders have been provided as a template; However, you may need to add more or possibly use less than four depending on what is needed.
+6. **Final Project**
+   - Apply your knowledge in a capstone project where you will design and implement a multi-agent system to solve a real-world problem.
 
-If you require an additional lesson folder, you can make a copy of the folder and paste it into the root directory.
+## Learning Objectives
+By the end of this course, you will be able to:
+- Design and implement multi-agent systems that can work collaboratively.
+- Understand and apply various coordination and communication strategies.
+- Utilize Python libraries to create functional multi-agent systems.
 
-### Exercises Folder
-
-Each `lesson` folder contains an `exercises` folder. This `exercises` folder should contain all files and instructions necessary for the exercises along with the solution. The solutions for these exercises will be shared with students. See the `README` in the `exercises` folder for information about folder structure.
