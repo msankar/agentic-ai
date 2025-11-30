@@ -168,14 +168,14 @@ def init_database(db_engine: Engine, seed: int = 137) -> Engine:
         # ----------------------------
         # 2. Load and initialize 'quote_requests' table
         # ----------------------------
-        quote_requests_df = pd.read_csv("data/quote_requests.csv")
+        quote_requests_df = pd.read_csv("quote_requests.csv")
         quote_requests_df["id"] = range(1, len(quote_requests_df) + 1)
         quote_requests_df.to_sql("quote_requests", db_engine, if_exists="replace", index=False)
 
         # ----------------------------
         # 3. Load and transform 'quotes' table
         # ----------------------------
-        quotes_df = pd.read_csv("data/quotes.csv")
+        quotes_df = pd.read_csv("quotes.csv")
         quotes_df["request_id"] = range(1, len(quotes_df) + 1)
         quotes_df["order_date"] = initial_date
 
@@ -590,593 +590,22 @@ def search_quote_history(search_terms: List[str], limit: int = 5) -> List[Dict]:
 
 
 # Set up and load your env parameters and instantiate your model.
-import re
-import json
-import yaml
-import importlib.resources
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from smolagents import ToolCallingAgent, OpenAIServerModel, tool
 
-# SET UP ENVIRONMENT AND MODEL
-dotenv.load_dotenv()
-model = OpenAIServerModel(
-    model_id="gpt-5-nano",
-    api_base="https://openai.vocareum.com/v1",
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
 
 """Set up tools for your agents to use, these should be methods that combine the database functions above
  and apply criteria to them to ensure that the flow of the system is correct."""
 
 
 # Tools for inventory agent
-@tool
-def check_stock_levels(item_name: str, as_of_date: str) -> str:
-    """
-    Checks the stock level for a given item.
 
-    Args:
-        item_name (str): Item name to check.
-        as_of_date (str): Date to check the stock level on, input in YYYY-MM-DD format.
-
-    Returns:
-        Stock level (str)
-    """
-    stock_level = get_stock_level(item_name, as_of_date)#use utility function provided
-    return stock_level.to_string()
-
-@tool
-def check_reorder_status(item_name: str, as_of_date: str) -> str:
-    """
-    Checks if an item needs to be reordered by comparing the current stock to the minimum stock level.
-
-    Args:
-        item_name (str): Name of the item to check.
-        as_of_date (str): Date to check the reorder status on, input in YYYY-MM-DD format.
-
-    Returns:
-        Reorder status (str)
-    """
-    stock_level_df = get_stock_level(item_name, as_of_date)#use utility function provided
-    if stock_level_df.empty or stock_level_df.iloc[0]["current_stock"] is None:
-        return f"Could not determine stock level for {item_name}."
-
-    current_stock = stock_level_df.iloc[0]["current_stock"]
-
-    inventory_df = pd.read_sql("SELECT min_stock_level FROM inventory WHERE item_name = :item_name", db_engine, params={"item_name": item_name})
-
-    if inventory_df.empty:
-        return f"Item {item_name} not found in inventory."
-
-    min_stock_level = inventory_df.iloc[0]["min_stock_level"]
-
-    if current_stock < min_stock_level:
-        return f"Item {item_name} needs to be reordered. Current stock: {current_stock}, Minimum stock: {min_stock_level}."
-    else:
-        return f"Item {item_name} is sufficiently stocked. Current stock: {current_stock}, Minimum stock: {min_stock_level}."
-
-@tool
-def place_stock_order(item_name: str, quantity: int, price: float, date: str) -> str:
-    """
-    Place a stock order for a certain quantity of items at a given price and date.
-
-    Args:
-        item_name (str): Name of the item to order.
-        quantity (int): Quantity of units to order.
-        price (float): Total price of the order.
-        date (str): Date of the order, input in YYYY-MM-DD format.
-
-    Returns:
-        Transaction status with a corresponding transaction ID.
-    """
-    try:
-        transaction_id = create_transaction(item_name, "stock_orders", quantity, price, date)#use utility function provided
-        return f"Stock order placed successfully. Transaction ID: {transaction_id}"
-    except Exception as e:
-        return f"Error placing stock order: {e}"
-
-@tool
-def get_full_inventory_report(as_of_date: str) -> str:
-    """
-    Generates inventory report of all items and their current stock levels for a given date.
-
-    Args:
-        as_of_date (str): The date for the report, in YYYY-MM-DD format.
-
-    Returns:
-        Inventory report (str)
-    """
-    inventory_dict = get_all_inventory(as_of_date) #use utility function provided
-    if not inventory_dict:
-        return "No inventory found."
-    return pd.DataFrame.from_dict(inventory_dict, orient='index', columns=['stock']).to_string()
-
-@tool
-def check_cash_balance(as_of_date: str) -> str:
-    """
-    Checks company's current cash balance.
-
-    Args:
-        as_of_date (str): Date to check the cash balance on, input in YYYY-MM-DD format.
-
-    Returns:
-        Company's current cash balance
-    """
-    balance = get_cash_balance(as_of_date) #use utility function provided.
-    return f"The current cash balance is ${balance:.2f}."
-
-@tool
-def get_company_financials(as_of_date: str) -> str:
-    """
-    Generates company financial report.
-
-    Args:
-        as_of_date (str): Date of report generation, in YYYY-MM-DD format.
-
-    Returns:
-        Finanial report (Str)
-    """
-    report = generate_financial_report(as_of_date) #use utility function provided
-    return (
-        f"Financial Report as of {report['as_of_date']}:\n"
-        f"Cash Balance: ${report['cash_balance']:.2f}\n"
-        f"Inventory Value: ${report['inventory_value']:.2f}\n"
-        f"Total Assets: ${report['total_assets']:.2f}\n"
-        f"Top Selling Products: {report['top_selling_products']}"
-    )
 
 # Tools for quoting agent
-@tool
-def quote_history(customer_request: str) -> str:
-    """
-    Search for historic quotes based on customer's request.
 
-    Args:
-        customer_request (str): Customer's request to search for in the quote history.
-
-    Returns:
-        Past quote history returned in String format.
-    """
-    try:
-        #Regex pattern to be matched for searching historic quotes
-        pattern = re.compile(
-            r'(?:\d[\d,]*\s+(?:sheets? of|reams? of|packets? of|of|)?\s*)([a-zA-Z0-9\s\(\)\'\"-]+?)(?=\n|,|\s+and\s+|\.|$)',
-            re.IGNORECASE
-        )
-
-        # Extract all matching item names from the request.
-        search_terms = [term.strip() for term in pattern.findall(customer_request)]
-
-        # If regex pattern match returned nothing, split the customer's request
-        if not search_terms:
-            search_terms = customer_request.split()
-
-        quotes = search_quote_history(search_terms) # Utility function is called here
-        if not quotes:
-            return "No similar historic quotes found."
-        return pd.DataFrame(quotes).to_string()
-    except Exception as e:
-        return f"Error searching quote history: {e}"
-
-
-@tool
-def get_pricing_and_availability(item_name: str, quantity: int, as_of_date: str) -> str:
-    """
-    Get the current price, availability, and estimated delivery date for a given item and quantity.
-    Applies a bulk discount for larger orders.
-
-    Args:
-        item_name (str): Name of the item to check.
-        quantity (int): Quantity of units being requested.
-        as_of_date (str): Date to check the price and availability on, in YYYY-MM-DD format.
-
-    Returns:
-        Item's price, availability, and estimated delivery date, or an error message.
-    """
-    try:
-        #Query DB for unit price
-        inventory_df = pd.read_sql("SELECT unit_price FROM inventory WHERE item_name = :item_name", db_engine,
-                                   params={"item_name": item_name})
-        if inventory_df.empty:
-            return f"Item {item_name} not found in inventory."
-
-        unit_price = inventory_df.iloc[0]["unit_price"]
-        stock_level_df = get_stock_level(item_name, as_of_date) #util function provided
-        current_stock = stock_level_df.iloc[0]['current_stock']
-
-        total_price = unit_price * quantity
-
-        delivery_date = get_supplier_delivery_date(as_of_date, quantity)
-
-        return (f"Item: {item_name}, Price per unit: ${unit_price:.2f}, "
-                f"Total for {quantity} units: ${total_price:.2f}. "
-                f"Availability: {current_stock} units. "
-                f"Estimated delivery date: {delivery_date}.")
-    except Exception as e:
-        return f"Error getting pricing and availability: {e}"
-
-
-@tool
-def apply_commission_and_discount(base_quote_str: str, discount_rate: float) -> str:
-    """
-    Apply a standard 5% sales commission and a variable loyalty discount to a base quote.
-    Agent determines the discount rate based on quote history.
-
-    Args:
-        base_quote_str (str): Output from the `get_pricing_and_availability` tool.
-        discount_rate (float): Loyalty discount rate to apply, as a decimal (e.g., 0.02 for 2%).
-
-    Returns:
-        A final quote including commission and the specified discount in string format.
-    """
-    try:
-        # Extract total price and quantity from the base quote string
-        price_match = re.search(r"Total for (\d+) units: \$([\d\.]+)\.", base_quote_str)
-        if not price_match:
-            return "Error: Could not parse base price from the quote string."
-
-        quantity = int(price_match.group(1))
-        base_price = float(price_match.group(2))
-
-        # Apply a standard 5% sales commission
-        sale_commission = 1.05
-        price_after_commission = base_price * sale_commission
-
-        # Apply the variable discount decided by the agent
-        discount_amount = base_price * discount_rate
-        final_price = price_after_commission - discount_amount
-
-        discount_explanation = ""
-        if discount_rate > 0:
-            discount_percentage = discount_rate * 100
-            discount_explanation += (
-                f" A {discount_percentage:.1f}% discount was applied for your order, "
-                f"saving an additional ${discount_amount:.2f}.")
-
-        # Replace the original total price with the new final price
-        final_quote_str = re.sub(
-            r"Total for \d+ units: \$[\d\.]+\.",
-            f"Total for {quantity} units: ${final_price:.2f}. {discount_explanation}",
-            base_quote_str
-        )
-
-        return final_quote_str
-    except Exception as e:
-        return f"Error applying commission and discount: {e}"
 
 # Tools for ordering agent
-@tool
-def finalize_order(item_name: str, quantity: int, price: float, date: str) -> str:
-    """
-    Finalize a customer's order by creating a sales transaction.
 
-    Args:
-        item_name (str): Name of the item being ordered.
-        quantity (int): Quantity of units being ordered.
-        price (float): Total price of the order.
-        date (str): Date of the order, input in YYYY-MM-DD format.
-
-    Returns:
-        Order transaction with transaction ID, or an error message.
-    """
-    try:
-        stock_level_df = get_stock_level(item_name, date)
-        if stock_level_df.empty or stock_level_df.iloc[0]["current_stock"] < quantity:
-            return f"Insufficient stock for {item_name}. Order cannot be fulfilled."
-
-        transaction_id = create_transaction(item_name, "sales", quantity, price, date)
-        return f"Order fulfilled successfully. Transaction ID: {transaction_id}"
-    except Exception as e:
-        return f"Error finalizing order: {e}"
 
 # Set up your agents and create an orchestration agent that will manage them.
-
-#Tool used by Orchestrator agent to normalize user input
-def normalize_item_names(user_request):
-    """
-    Normalize user input and extract semantic intent (item + quantity).
-    Performs vector search to find the closest matching inventory item
-    and returns the interpreted item name and resolved quantity.
-    """
-    # Regex pattern to capture quantity, units, item phrase until newline, comma and "and"
-    pattern = re.compile(
-        r'(\d[\d,]*\s+(?:sheets? of|reams? of|packets? of|of|)?\s*)([a-zA-Z0-9\s\(\)\'\"-]+?)(?=\n|,|\s+and\s+|\.|$)',
-        re.IGNORECASE
-    )
-    def find_and_replace(match):
-        quantity_and_units = match.group(1) #quantity
-        item_phrase = match.group(2).strip() #item
-        parsed_input = re.sub(r'\([\w\s-]+\)', '', item_phrase, flags=re.IGNORECASE).strip()
-        parsed_input = re.sub(r'\b(high-quality|heavy|white|assorted colors|various colors|standard|printer)\b', '', parsed_input, flags=re.IGNORECASE).strip()
-
-        if not parsed_input:
-            return match.group(0) #Return original if parsed string is empty
-
-        # Find semantically similar match in the inventory
-        top_match, score = vector_search_initial.search(parsed_input, threshold=0.3)
-
-        if top_match:
-            return f"{quantity_and_units}{top_match}" #Normalize with item name and quantity
-        else:
-            return match.group(0) #Return original text
-
-    return pattern.sub(find_and_replace, user_request)
-
-class InventoryVectorSearch:
-    """
-    Find the top matched inventory item that is semantically similar to the query.
-    """
-    def __init__(self, inventory_items: List[str]):
-        self.vectorizer = TfidfVectorizer(stop_words='english')
-        self.inventory_items = inventory_items
-        if self.inventory_items:
-            self.inventory_vectors = self.vectorizer.fit_transform(self.inventory_items)
-        else:
-            self.inventory_vectors = None
-
-    def search(self, query: str, threshold: float = 0.3) -> (Union[str, None], float):
-        """
-        Retrieve the best matched inventory item for a query string.
-
-        Args:
-            query (str): User's search query (e.g., a cleaned item phrase).
-            threshold (float): Minimum similarity score to be considered a match. Reject items below this score.
-
-        Returns:
-            Tuple containing the top matching item name and its similarity score, (None,0) otherwise.
-        """
-        if not self.inventory_items or self.inventory_vectors is None:
-            return None, 0.0
-
-        query_vector = self.vectorizer.transform([query])
-        similarities = cosine_similarity(query_vector, self.inventory_vectors).flatten()
-
-        best_match_index = np.argmax(similarities)
-        score = similarities[best_match_index]
-
-        if score >= threshold:
-            best_match = self.inventory_items[best_match_index]
-            return best_match, score
-        else:
-            return None, 0.0
-
-# Initialize the vector search with all possible inventory items.
-vector_search_initial = InventoryVectorSearch([item["item_name"] for item in paper_supplies])
-
-# Setup Ordering Agent
-class OrderingAgent:
-    """
-       Finalizes customer orders. Confirms stock availability, if available creates a sales transaction to complete customer purchase.
-    """
-    def __init__(self, model: OpenAIServerModel):
-        # Load default prompt templates
-        prompt_templates = yaml.safe_load(
-            importlib.resources.files("smolagents.prompts").joinpath("toolcalling_agent.yaml").read_text()
-        )
-        # Set the custom system prompt
-        prompt_templates["system_prompt"] = ORDERING_SYSTEM_PROMPT
-
-        super().__init__(
-            tools=[
-                finalize_order
-            ],
-            model=model,
-            name="ordering_agent",
-            description="Finalizes customer orders. Confirms stock availability, if available creates a sales transaction to complete the purchase.",
-            prompt_templates=prompt_templates,
-            max_steps=10,
-        )
-
-# Setup Inventory Agent
-class InventoryAgent:
-    """
-    Inventory management agent. Responsible for checking stock level availability, reordering if unavailable,
-    and producing financial reports.
-    """
-    def __init__(self, model: OpenAIServerModel):
-        # Load default prompt templates
-        prompt_templates = yaml.safe_load(
-            importlib.resources.files("smolagents.prompts").joinpath("toolcalling_agent.yaml").read_text()
-        )
-        # Set the custom system prompt
-        prompt_templates["system_prompt"] = INVENTORY_SYSTEM_PROMPT
-
-        super().__init__(
-            tools=[
-                check_stock_levels,
-                check_reorder_status,
-                place_stock_order,
-                get_full_inventory_report,
-                check_cash_balance,
-                get_company_financials
-            ],
-            model=model,
-            name="inventory_agent",
-            prompt_templates=prompt_templates,
-            description=(
-                "Agent for managing inventory. Handles inquiries about stock levels and inventory reports. "
-                "It is also responsible for the reordering workflow: "
-                "1. Check if an item needs reordering. "
-                "2. If it does, check the company's cash balance to ensure sufficient funds. "
-                "3. If there is enough cash, place a stock order to replenish the inventory."
-            ),
-            max_steps=10,
-        )
-
-# Setup Orchestrator Agent
-class OrchestratorAgent(ToolCallingAgent):
-    """
-    Agent that manages customer orders end-to-end. Calls the `handle_customer_request` tool.
-    This tool normalizes request and orchestrates request workflow between inventory, quoting,
-    ordering, and analysis agents.
-    """
-    def __init__(self, model):
-        # Instantiate the specialized agents
-        self.quoting_agent = QuotingAgent(model=model)
-        self.analysis_agent = AnalysisAgent(model=model)
-        self.inventory_agent = InventoryAgent(model=model)
-        self.ordering_agent = OrderingAgent(model=model)
-
-
-        @tool
-        def handle_customer_request(user_request: str, as_of_date: str) -> str:
-            """
-            Handles customer request workflow end-to-end by orchestrating the request between analysis, inventory,
-            quoting, ordering agents. Gets a quote, checks for available stock, places order,
-            reorders if necessary and fulfills customer's order
-
-            Args:
-                user_request (str): The full text of the customer's request.
-                as_of_date (str): The date for the request, in YYYY-MM-DD format.
-
-            Returns:
-                Final status of the request. (str)
-            """
-            # 1: Normalize request. Parse user request for item names, replace them with official inventory item names.
-            # Recognize item names using semantic search, identify quantity in user request.
-            normalized_request = normalize_item_names(user_request)
-
-            # 2: Get a quote from Quoting agent.
-            quote_task = (
-                f"Provide a detailed quote for each item in the following request as of {as_of_date}: {normalized_request}."
-                f" Quote will include item name, quantity, total price, estimated delivery date,"
-                f" current stock level and current stock status. "
-                f" Current stock status is sufficient if current stock level >= quantity otherwise insufficient.")
-            quote_result_message = self.quoting_agent.run(task=quote_task, additional_args={})
-            quote_result = str(quote_result_message)
-
-            # 3: Call Analysis agent to analyze the quote returned by Quoting Agent and decide the next action.
-            analysis_prompt = f"""
-            Analyze the following quote and determine the next action based on the rules provided.
-            Quote: "{quote_result}"
-
-            Rules:
-            1. If current stock status is sufficient, next action is 'FINALIZE_ORDER'.
-            2. If current stock status is insufficient but the estimated delivery date is less than or equal to delivery date requested by user, next action is 'REORDER_STOCK'.
-            3. If current stock status is insufficient and the estimated delivery date is greater than delivery date requested by user, next action is 'CANNOT_FULFILL'.
-
-            Extract all necessary details for any potential action: 'item_name', 'quantity', 'total_price' and 'request_date'.
-
-            Respond ONLY as a JSON object with keys 'action' and 'details'.
-            Example for FINALIZE_ORDER:
-            {{"action": "FINALIZE_ORDER", "details": [{{"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date":"April 15, 2025"}},{{"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date":"April 15, 2025"}}]}}
-            Example for REORDER_STOCK:
-            {{"action": "REORDER_STOCK", "details": [{{"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date":"April 15, 2025"}},{{"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date":"April 15, 2025"}}]}}
-            Example for CANNOT_FULFILL:
-            {{"action": "CANNOT_FULFILL", "details": [{{"reason": "current stock status is insufficient and delivery date is not possible to meet"}}]}}
-            """
-            analysis_result_message = self.analysis_agent.run(analysis_prompt) #get result from Analysis agent
-            analysis_result = str(analysis_result_message)
-
-            try:
-                decision = json.loads(analysis_result)
-                action = decision.get("action")
-                details = decision.get("details")
-            except json.JSONDecodeError:
-                return "We apologize for the inconvenience, but we encountered a technical issue while processing your request. Please try again later."
-
-            # 4: Execute the determined action. If action is FINALIZE_ORDER call Inventory Agent,
-            # check for stock and place order with Ordering Agent. If inventory is unavailable, and we have time to
-            # fulfill order reorder stock with Inventory Agent. Otherwise respond with error status to user.
-            if action == "FINALIZE_ORDER":
-                order_task = ""
-                inventory_confirmation_task = "Check inventory for these items using tool `check_stock_levels`"
-                for item in details:
-                    order_task += f"Finalize the order for {item.get('quantity')} of '{item.get('item_name')}' at a total price of {item.get('total_price')} as of {as_of_date}. "
-                    inventory_confirmation_task += f" ({item.get('quantity')} of '{item.get('item_name')}' as of {as_of_date}),"
-                inventory_confirmation_task += f"""
-                Result: If current stock of any item >= quantity, the success is True else False
-                Respond ONLY with a JSON object with keys 'success' and 'reason'.
-                Example for success: {{"success": "True", "reason": "sufficient stocks found"}}
-                Example for failure: {{"success": "False", "reason": "insufficient stocks"}}
-                """
-                inventory_confirmation_message = self.inventory_agent.run(task=inventory_confirmation_task,
-                                                                          additional_args={})
-                inventory_confirmation_result = str(inventory_confirmation_message)
-                try:
-                    inventory_confirmation = json.loads(inventory_confirmation_result)
-                    success = inventory_confirmation.get("success")
-                    reason = inventory_confirmation.get("reason")
-                except json.JSONDecodeError:
-                    return "We apologize, but we encountered a technical issue while checking our inventory. Please try again later."
-                if success:
-                    order_result_message = self.ordering_agent.run(task=order_task, additional_args={})
-                    return f"Your order has been successfully processed. {str(order_result_message)}. We will notify you once it has shipped."
-                else:
-                    print(f"Order could not be finalized. The inventory could not be confirmed. Reason: {reason}")
-                    action = "REORDER_STOCK"
-
-            if action == "REORDER_STOCK":
-                reorder_task = ""
-                for item in details:
-                    reorder_task += f"Place a stock order: {item.get("quantity")} of '{item.get("item_name")}' as of {as_of_date}. "
-                reorder_task += f"""
-                Result: If any orders are placed successfully. The success is True else False
-                Respond ONLY with a JSON object with keys 'success' and 'reason'.
-                Example for success: {{"success": "True", "reason": "orders placed"}}
-                Example for failure: {{"success": "False", "reason": "order failed due to insufficient funds"}}
-                """
-                reorder_result_message = self.inventory_agent.run(task=reorder_task, additional_args={})
-                reorder_result = str(reorder_result_message)
-                try:
-                    reorder_result_json = json.loads(reorder_result)
-                    success = reorder_result_json.get("success")
-                    reason = reorder_result_json.get("reason")
-                except json.JSONDecodeError:
-                    return "We apologize, but we encountered a technical issue while attempting to reorder stock. Please try again later."
-
-                if success:
-                    order_task = ""
-                    for item in details:
-                        order_task += f"Finalize the order for {item.get('quantity')} of '{item.get('item_name')}' at a total price of {item.get('total_price')} as of {as_of_date}. "
-                    order_result_message = self.ordering_agent.run(task=order_task, additional_args={})
-                    return f"Some items in your request were temporarily out of stock. We have placed an order to replenish our inventory, and your order has now been finalized. {str(order_result_message)}."
-                else:
-                    return f"We apologize, but we are unable to fulfill your order at this time. We could not replenish the required stock due to the following reason: {reason}. Please try again later."
-
-            if action == "CANNOT_FULFILL":
-                reason_text = details[0].get('reason', 'Unspecified Issue')
-                return f"We apologize, but we cannot fulfill your order as requested for the following reason: {reason_text}. We have generated a quote based on available stock and delivery times for your consideration:\n\n{quote_result}"
-
-            return "We apologize for the inconvenience, but we were unable to process your request. Please try rephrasing your request."
-
-        # Initialize the parent ToolCallingAgent
-        super().__init__(
-            model=model,
-            tools=[
-                handle_customer_request
-            ],
-            description="""An orchestrator that manages the user's order request workflow by calling the
-            `handle_customer_request` tool. It coordinates between inventory, quoting,
-            ordering, and analysis agents to handle user orders efficiently.
-            """,
-            max_steps=1,
-            instructions="""
-            You are a specialized customer service agent for a paper supply company. 
-            Your ONLY responsibility is to handle customer inquiries and orders for paper products.
-            You must process every customer request by using the `handle_customer_request` tool.
-
-            **CRITICAL RULE:** For ANY user input that is a request for paper, you MUST call the `handle_customer_request` tool. Do NOT answer the user directly with advice. Your entire purpose is to call this tool to process the order.
-
-            - **DO NOT** provide advice on how to order paper from other companies. You ARE the company.
-            - **DO NOT** act as a general assistant.
-            - **ALWAYS** use the `handle_customer_request` tool to get the result.
-
-            After the tool returns a result, you will present that result to the user. When formatting the final response, you MUST adhere to the following rules:
-            1.  **Relevant Information**: Ensure your response contains all the information directly relevant to the customer's request.
-            2.  **Provide Rationale**: Include a clear justification for key decisions. For example, explain why an order cannot be fulfilled (e.g., "due to insufficient stock") or why a price includes a discount.
-            3.  **Protect Sensitive Information**: Your final response to the customer MUST NOT reveal sensitive internal company information, such as exact profit margins, internal system error messages, or any personally identifiable information (PII) beyond what is essential for the transaction.
-            """
-            # Pass the specialized agents as managed_agents for proper delegation
-            # managed_agents=[
-            #     inventory_agent,
-            #     quoting_agent,
-            #     ordering_agent,
-            # ],
-            # Pass the customized prompt templates
-            # prompt_templates=prompt_templates,
-        )
 
 
 # Run your test scenarios by writing them here. Make sure to keep track of them.
@@ -1186,7 +615,7 @@ def run_test_scenarios():
     print("Initializing Database...")
     init_database()
     try:
-        quote_requests_sample = pd.read_csv("data/quote_requests_sample.csv")
+        quote_requests_sample = pd.read_csv("quote_requests_sample.csv")
         quote_requests_sample["request_date"] = pd.to_datetime(
             quote_requests_sample["request_date"], format="%m/%d/%y", errors="coerce"
         )
@@ -1196,7 +625,7 @@ def run_test_scenarios():
         print(f"FATAL: Error loading test data: {e}")
         return
 
-    quote_requests_sample = pd.read_csv("data/quote_requests_sample.csv")
+    quote_requests_sample = pd.read_csv("quote_requests_sample.csv")
 
     # Sort by date
     quote_requests_sample["request_date"] = pd.to_datetime(
@@ -1217,7 +646,6 @@ def run_test_scenarios():
     ############
     ############
     ############
-    orchestrator = OrchestratorAgent(model)
 
     results = []
     for idx, row in quote_requests_sample.iterrows():
@@ -1239,8 +667,8 @@ def run_test_scenarios():
         ############
         ############
         ############
+
         # response = call_your_multi_agent_system(request_with_date)
-        response = orchestrator.run_query(request_with_date)
 
         # Update state
         report = generate_financial_report(request_date)
