@@ -8,6 +8,8 @@ from sqlalchemy.sql import text
 from datetime import datetime, timedelta
 from typing import Dict, List, Union
 from sqlalchemy import create_engine, Engine
+import logging
+import json
 
 # Create an SQLite database
 db_engine = create_engine("sqlite:///munder_difflin.db")
@@ -945,7 +947,7 @@ class InventoryVectorSearch:
 vector_search_initial = InventoryVectorSearch([item["item_name"] for item in paper_supplies])
 
 # Setup Ordering Agent
-class OrderingAgent:
+class OrderingAgent(ToolCallingAgent):
     """
        Finalizes customer orders. Confirms stock availability, if available creates a sales transaction to complete customer purchase.
     """
@@ -969,7 +971,7 @@ class OrderingAgent:
         )
 
 # Setup Inventory Agent
-class InventoryAgent:
+class InventoryAgent(ToolCallingAgent):
     """
     Inventory management agent. Responsible for checking stock level availability, reordering if unavailable,
     and producing financial reports.
@@ -997,19 +999,59 @@ class InventoryAgent:
             description=(
                 "Agent for managing inventory. Handles inquiries about stock levels and inventory reports. "
                 "It is also responsible for the reordering workflow: "
-                "1. Check if an item needs reordering. "
-                "2. If it does, check the company's cash balance to ensure sufficient funds. "
-                "3. If there is enough cash, place a stock order to replenish the inventory."
+                "Check if an item needs reordering. check the company's cash balance to ensure sufficient funds."
+                " If there is enough cash, place a reorder."
             ),
             max_steps=10,
         )
 
+# Setup Analysis Agent
+class AnalysisAgent(ToolCallingAgent):
+    def __init__(self, model: OpenAIServerModel):
+        super().__init__(
+            tools=[],
+            model=model,
+            name="analysis_agent",
+            description="Analyze and Decide the next action",
+            max_steps=5,
+        )
+
+# Setup quoting Agent
+class QuotingAgent(ToolCallingAgent):
+    """
+      Handles all quoting tasks. Agent provides pricing, checks item availability,
+      and searches historical quote data to come up with quotes
+    """
+    def __init__(self, model: OpenAIServerModel):
+        # Load default prompt templates
+        prompt_templates = yaml.safe_load(
+            importlib.resources.files("smolagents.prompts").joinpath("toolcalling_agent.yaml").read_text()
+        )
+        # Set the custom system prompt
+        prompt_templates["system_prompt"] = QUOTING_SYSTEM_PROMPT
+
+        super().__init__(
+            tools=[
+                get_pricing_and_availability,
+                quote_history,
+                apply_commission_and_discount
+            ],
+            model=model,
+            name="quoting_agent",
+            description=(
+                "Generates final customer quotes. It gets base pricing, checks historical data, "
+                "decides on a reasonable loyalty discount, and applies a standard sales commission."
+            ),
+            prompt_templates=prompt_templates,
+            max_steps=10,
+        )
+
+
 # Setup Orchestrator Agent
 class OrchestratorAgent(ToolCallingAgent):
     """
-    Agent that manages customer orders end-to-end. Calls the `handle_customer_request` tool.
-    This tool normalizes request and orchestrates request workflow between inventory, quoting,
-    ordering, and analysis agents.
+    Manages customer orders end-to-end. Calls the `handle_customer_request` tool.
+    Orchestrates workflow between inventory, quoting, ordering, and analysis agents.
     """
     def __init__(self, model):
         # Instantiate the specialized agents
@@ -1018,13 +1060,12 @@ class OrchestratorAgent(ToolCallingAgent):
         self.inventory_agent = InventoryAgent(model=model)
         self.ordering_agent = OrderingAgent(model=model)
 
-
         @tool
         def handle_customer_request(user_request: str, as_of_date: str) -> str:
             """
             Handles customer request workflow end-to-end by orchestrating the request between analysis, inventory,
             quoting, ordering agents. Gets a quote, checks for available stock, places order,
-            reorders if necessary and fulfills customer's order
+            reorders if necessary, and fulfills customer's order.
 
             Args:
                 user_request (str): The full text of the customer's request.
@@ -1033,111 +1074,100 @@ class OrchestratorAgent(ToolCallingAgent):
             Returns:
                 Final status of the request. (str)
             """
-            # 1: Normalize request. Parse user request for item names, replace them with official inventory item names.
-            # Recognize item names using semantic search, identify quantity in user request.
+            # 1: Normalize request
             normalized_request = normalize_item_names(user_request)
 
-            # 2: Get a quote from Quoting agent.
+            # 2: Get a quote from Quoting Agent
             quote_task = (
-                f"Provide a detailed quote for each item in the following request as of {as_of_date}: {normalized_request}."
-                f" Quote will include item name, quantity, total price, estimated delivery date,"
-                f" current stock level and current stock status. "
-                f" Current stock status is sufficient if current stock level >= quantity otherwise insufficient.")
+                f"Provide a detailed quote for each item in the following request as of {as_of_date}: {normalized_request}. "
+                f"Quote should include item name, quantity, total price, estimated delivery date, "
+                f"current stock level, and current stock status. "
+                f"Stock status is sufficient if current stock level >= quantity, otherwise insufficient."
+            )
             quote_result_message = self.quoting_agent.run(task=quote_task, additional_args={})
             quote_result = str(quote_result_message)
 
-            # 3: Call Analysis agent to analyze the quote returned by Quoting Agent and decide the next action.
-            analysis_prompt = f"""
-            Analyze the following quote and determine the next action based on the rules provided.
-            Quote: "{quote_result}"
-
-            Rules:
-            1. If current stock status is sufficient, next action is 'FINALIZE_ORDER'.
-            2. If current stock status is insufficient but the estimated delivery date is less than or equal to delivery date requested by user, next action is 'REORDER_STOCK'.
-            3. If current stock status is insufficient and the estimated delivery date is greater than delivery date requested by user, next action is 'CANNOT_FULFILL'.
-
-            Extract all necessary details for any potential action: 'item_name', 'quantity', 'total_price' and 'request_date'.
-
-            Respond ONLY as a JSON object with keys 'action' and 'details'.
-            Example for FINALIZE_ORDER:
-            {{"action": "FINALIZE_ORDER", "details": [{{"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date":"April 15, 2025"}},{{"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date":"April 15, 2025"}}]}}
-            Example for REORDER_STOCK:
-            {{"action": "REORDER_STOCK", "details": [{{"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date":"April 15, 2025"}},{{"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date":"April 15, 2025"}}]}}
-            Example for CANNOT_FULFILL:
-            {{"action": "CANNOT_FULFILL", "details": [{{"reason": "current stock status is insufficient and delivery date is not possible to meet"}}]}}
-            """
-            analysis_result_message = self.analysis_agent.run(analysis_prompt) #get result from Analysis agent
+            # 3: Analyze the quote using Analysis Agent
+            analysis_prompt = f"{ANALYSIS_SYSTEM_PROMPT}\nQuote Result: {quote_result}"
+            analysis_result_message = self.analysis_agent.run(analysis_prompt)
             analysis_result = str(analysis_result_message)
 
             try:
                 decision = json.loads(analysis_result)
                 action = decision.get("action")
-                details = decision.get("details")
+                details = decision.get("details", [])
             except json.JSONDecodeError:
                 return "We apologize for the inconvenience, but we encountered a technical issue while processing your request. Please try again later."
 
-            # 4: Execute the determined action. If action is FINALIZE_ORDER call Inventory Agent,
-            # check for stock and place order with Ordering Agent. If inventory is unavailable, and we have time to
-            # fulfill order reorder stock with Inventory Agent. Otherwise respond with error status to user.
+            # 4: Execute actions based on analysis
             if action == "FINALIZE_ORDER":
-                order_task = ""
-                inventory_confirmation_task = "Check inventory for these items using tool `check_stock_levels`"
-                for item in details:
-                    order_task += f"Finalize the order for {item.get('quantity')} of '{item.get('item_name')}' at a total price of {item.get('total_price')} as of {as_of_date}. "
-                    inventory_confirmation_task += f" ({item.get('quantity')} of '{item.get('item_name')}' as of {as_of_date}),"
-                inventory_confirmation_task += f"""
-                Result: If current stock of any item >= quantity, the success is True else False
-                Respond ONLY with a JSON object with keys 'success' and 'reason'.
-                Example for success: {{"success": "True", "reason": "sufficient stocks found"}}
-                Example for failure: {{"success": "False", "reason": "insufficient stocks"}}
-                """
+                # Check inventory first
+                inventory_items = [
+                    {
+                        "item_name": item.get("item_name"),
+                        "quantity": item.get("quantity")
+                    } for item in details
+                ]
+                inventory_confirmation_task = (
+                    f"Check inventory for the following items as of {as_of_date}: {inventory_items}. "
+                    "Respond ONLY with a JSON object with keys 'success' and 'reason'. "
+                    "Example for success: {\"success\": true, \"reason\": \"sufficient stocks found\"}. "
+                    "Example for failure: {\"success\": false, \"reason\": \"insufficient stocks\"}."
+                )
+
                 inventory_confirmation_message = self.inventory_agent.run(task=inventory_confirmation_task,
                                                                           additional_args={})
-                inventory_confirmation_result = str(inventory_confirmation_message)
                 try:
-                    inventory_confirmation = json.loads(inventory_confirmation_result)
-                    success = inventory_confirmation.get("success")
-                    reason = inventory_confirmation.get("reason")
+                    inventory_confirmation = json.loads(str(inventory_confirmation_message))
+                    success = inventory_confirmation.get("success", False)
+                    reason = inventory_confirmation.get("reason", "Unknown reason")
                 except json.JSONDecodeError:
                     return "We apologize, but we encountered a technical issue while checking our inventory. Please try again later."
+
                 if success:
+                    order_lines = [
+                        f"Finalize order for {item['quantity']} of '{item['item_name']}' at a total price of {item.get('total_price')} as of {as_of_date}."
+                        for item in details
+                    ]
+                    order_task = " ".join(order_lines)
                     order_result_message = self.ordering_agent.run(task=order_task, additional_args={})
                     return f"Your order has been successfully processed. {str(order_result_message)}. We will notify you once it has shipped."
                 else:
-                    print(f"Order could not be finalized. The inventory could not be confirmed. Reason: {reason}")
                     action = "REORDER_STOCK"
 
             if action == "REORDER_STOCK":
-                reorder_task = ""
-                for item in details:
-                    reorder_task += f"Place a stock order: {item.get("quantity")} of '{item.get("item_name")}' as of {as_of_date}. "
-                reorder_task += f"""
-                Result: If any orders are placed successfully. The success is True else False
-                Respond ONLY with a JSON object with keys 'success' and 'reason'.
-                Example for success: {{"success": "True", "reason": "orders placed"}}
-                Example for failure: {{"success": "False", "reason": "order failed due to insufficient funds"}}
-                """
+                reorder_lines = [
+                    f"Place a stock order: {item['quantity']} of '{item['item_name']}' as of {as_of_date}."
+                    for item in details
+                ]
+                reorder_task = " ".join(reorder_lines) + (
+                    " Respond ONLY with a JSON object with keys 'success' and 'reason'. "
+                    "Example for success: {\"success\": true, \"reason\": \"orders placed\"}. "
+                    "Example for failure: {\"success\": false, \"reason\": \"order failed due to insufficient funds\"}."
+                )
+
                 reorder_result_message = self.inventory_agent.run(task=reorder_task, additional_args={})
-                reorder_result = str(reorder_result_message)
                 try:
-                    reorder_result_json = json.loads(reorder_result)
-                    success = reorder_result_json.get("success")
-                    reason = reorder_result_json.get("reason")
+                    reorder_result = json.loads(str(reorder_result_message))
+                    success = reorder_result.get("success", False)
+                    reason = reorder_result.get("reason", "Unknown reason")
                 except json.JSONDecodeError:
                     return "We apologize, but we encountered a technical issue while attempting to reorder stock. Please try again later."
 
                 if success:
-                    order_task = ""
-                    for item in details:
-                        order_task += f"Finalize the order for {item.get('quantity')} of '{item.get('item_name')}' at a total price of {item.get('total_price')} as of {as_of_date}. "
+                    order_lines = [
+                        f"Finalize order for {item['quantity']} of '{item['item_name']}' at a total price of {item.get('total_price')} as of {as_of_date}."
+                        for item in details
+                    ]
+                    order_task = " ".join(order_lines)
                     order_result_message = self.ordering_agent.run(task=order_task, additional_args={})
-                    return f"Some items in your request were temporarily out of stock. We have placed an order to replenish our inventory, and your order has now been finalized. {str(order_result_message)}."
+                    return f"Some items were temporarily out of stock. We replenished inventory and finalized your order. {str(order_result_message)}."
                 else:
-                    return f"We apologize, but we are unable to fulfill your order at this time. We could not replenish the required stock due to the following reason: {reason}. Please try again later."
+                    return f"We apologize, but we cannot fulfill your order at this time. Reason: {reason}. Please try again later."
 
             if action == "CANNOT_FULFILL":
-                reason_text = details[0].get('reason', 'Unspecified Issue')
-                return f"We apologize, but we cannot fulfill your order as requested for the following reason: {reason_text}. We have generated a quote based on available stock and delivery times for your consideration:\n\n{quote_result}"
+                reason_text = details[0].get('reason', 'Unspecified issue') if details else 'Unspecified issue'
+                return f"We apologize, but we cannot fulfill your order. Reason: {reason_text}. Here is a quote based on available stock:\n\n{quote_result}"
 
             return "We apologize for the inconvenience, but we were unable to process your request. Please try rephrasing your request."
 
@@ -1168,15 +1198,310 @@ class OrchestratorAgent(ToolCallingAgent):
             2.  **Provide Rationale**: Include a clear justification for key decisions. For example, explain why an order cannot be fulfilled (e.g., "due to insufficient stock") or why a price includes a discount.
             3.  **Protect Sensitive Information**: Your final response to the customer MUST NOT reveal sensitive internal company information, such as exact profit margins, internal system error messages, or any personally identifiable information (PII) beyond what is essential for the transaction.
             """
-            # Pass the specialized agents as managed_agents for proper delegation
-            # managed_agents=[
-            #     inventory_agent,
-            #     quoting_agent,
-            #     ordering_agent,
-            # ],
-            # Pass the customized prompt templates
-            # prompt_templates=prompt_templates,
         )
+
+####################################
+ORDERING_SYSTEM_PROMPT = """
+ROLE:
+You are the Ordering Agent. You finalize customer orders by calling the correct tool when appropriate.
+
+TOOL:
+- finalize_order(item_name, quantity, price_per_unit)
+    → Creates a sales transaction for the specified item.
+
+------------------------------------------
+CORE EXECUTION RULES
+------------------------------------------
+
+1. Your only operational responsibility is to interpret the user’s request
+   and call `finalize_order` **only when the request is complete,
+   unambiguous, and contains all required information**:
+      - item_name
+      - quantity
+      - price_per_unit
+
+2. If any required information is missing, unclear, or contradictory:
+      → DO NOT call `finalize_order`.
+
+3. When you cannot proceed because the request is ambiguous or incomplete:
+      - Provide a clear explanation of why you cannot fulfill the request.
+      - State explicitly that the request was ambiguous.
+      - Summarize what you understood.
+      - Ask for the missing information or clarification.
+
+------------------------------------------
+MANDATORY BEHAVIOR
+------------------------------------------
+
+- NEVER call `finalize_order` without all required parameters.
+- NEVER infer missing details unless the user explicitly provides them.
+- ALWAYS confirm the request is unambiguous before executing.
+- If the user’s intent is unclear, ask for clarification instead of acting.
+
+"""
+
+
+INVENTORY_SYSTEM_PROMPT = """
+ROLE:
+You are the Inventory Manager Agent. You maintain inventory health and execute user-assigned inventory tasks.
+You ALWAYS run proactive maintenance before executing the assigned task.
+
+TOOLS (all calls MUST use correct arguments):
+- check_stock_levels(item_name)
+- check_reorder_status(item_name)
+- place_stock_order(item_name, quantity)
+- check_cash_balance()
+- get_full_inventory_report()
+- get_company_financials()
+
+----------------------------------------
+CORE EXECUTION FLOW (ALWAYS FOLLOW EXACTLY)
+----------------------------------------
+
+For EVERY request you receive, execute these phases **in order**:
+
+===================================================
+PHASE 1 — PROACTIVE STOCK MAINTENANCE (ALWAYS FIRST)
+===================================================
+1. Call `get_full_inventory_report`.
+2. For each item returned:
+   a. Call `check_reorder_status(item_name)`.
+   b. If item is below minimum threshold:
+      - Retrieve current stock via `check_stock_levels(item_name)`.
+      - Compute reorder quantity:
+            reorder_qty = (min_stock_level - current_stock) + 50
+      - Attempt reorder by following the strict
+        "PLACE_STOCK_ORDER PROTOCOL" below.
+
+=============================================
+PHASE 2 — EXECUTE THE USER’S REQUEST (SECOND)
+=============================================
+After PHASE 1 finishes:
+- Perform the specific task requested.
+- ALWAYS follow the tool-use restrictions in the
+  "PLACE_STOCK_ORDER PROTOCOL."
+
+----------------------------------------
+PLACE_STOCK_ORDER PROTOCOL (MANDATORY)
+----------------------------------------
+Before EVERY call to `place_stock_order(item_name, quantity)`:
+
+Step 0 — RECALCULATE QUANTITY
+- Determine updated quantity using:
+      quantity = quantity + minimum_required_level - check_stock_levels(item_name)
+
+Step 1 — DETERMINE ORDER COST
+- You MUST have item_name, quantity, and unit_price.
+- If unit_price is unknown, call `get_company_financials`.
+- Compute:
+      total_cost = quantity * unit_price
+
+Step 2 — CHECK FUNDS
+- Call `check_cash_balance` to get cash_balance.
+
+Step 3 — APPROVE OR REJECT
+- If cash_balance >= total_cost:
+      → You MAY call place_stock_order(item_name, quantity)
+- Else:
+      → DO NOT call place_stock_order.
+        Instead report: "Order blocked: insufficient funds."
+
+----------------------------------------
+AMBIGUITY RULE
+----------------------------------------
+If the user request is ambiguous, incomplete, or cannot be executed:
+- DO NOT place any orders.
+- Respond with:
+    - A summary of your capabilities.
+    - A request for clarification.
+
+----------------------------------------
+MANDATORY BEHAVIOR REQUIREMENTS
+----------------------------------------
+- NEVER skip the Proactive Stock Maintenance phase.
+- NEVER call tools out of order.
+- NEVER place an order without completing the protocol.
+- ALWAYS explain failures clearly.
+- ALWAYS follow explicit math formulas.
+- If multiple items require reordering, process them sequentially.
+
+"""
+
+
+ANALYSIS_SYSTEM_PROMPT = """
+ROLE:
+You are the Analysis Agent. You examine a provided quote and determine the correct next action for the order workflow.
+
+Your job:
+1. Analyze the quote data.
+2. Apply the decision rules exactly.
+3. Output ONLY a JSON object containing:
+      - "action": one of ["FINALIZE_ORDER", "REORDER_STOCK", "CANNOT_FULFILL"]
+      - "details": a list of extracted objects relevant to the action.
+
+------------------------------------------
+INPUT
+------------------------------------------
+Quote: "{quote_result}"
+
+The quote may contain:
+- item_name
+- quantity
+- unit_price or total_price
+- stock status (sufficient / insufficient)
+- estimated delivery date
+- user-requested delivery date
+- any other contextual details you must parse
+
+------------------------------------------
+DECISION RULES (MUST FOLLOW STRICTLY)
+------------------------------------------
+
+1. If stock is SUFFICIENT:
+      action = "FINALIZE_ORDER"
+
+2. If stock is INSUFFICIENT AND
+   estimated_delivery_date <= user_requested_delivery_date:
+      action = "REORDER_STOCK"
+
+3. If stock is INSUFFICIENT AND
+   estimated_delivery_date > user_requested_delivery_date:
+      action = "CANNOT_FULFILL"
+
+------------------------------------------
+DETAIL EXTRACTION RULES
+------------------------------------------
+You MUST extract the following fields when available:
+- item_name
+- quantity
+- total_price
+- request_date  (user-requested delivery date)
+
+For CANNOT_FULFILL:
+- Provide a "reason" field instead of item details.
+
+------------------------------------------
+STRICT OUTPUT REQUIREMENTS
+------------------------------------------
+You MUST respond with ONLY a JSON object.
+No commentary, no explanation, no formatting outside JSON.
+
+------------------------------------------
+EXAMPLES
+------------------------------------------
+
+Example for FINALIZE_ORDER:
+{
+  "action": "FINALIZE_ORDER",
+  "details": [
+    {"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date": "April 15, 2025"},
+    {"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date": "April 15, 2025"}
+  ]
+}
+
+Example for REORDER_STOCK:
+{
+  "action": "REORDER_STOCK",
+  "details": [
+    {"item_name": "A4 Paper", "quantity": 5, "total_price": 0.30, "request_date": "April 15, 2025"},
+    {"item_name": "NotePad", "quantity": 50, "total_price": 100.00, "request_date": "April 15, 2025"}
+  ]
+}
+
+Example for CANNOT_FULFILL:
+{
+  "action": "CANNOT_FULFILL",
+  "details": [
+    {"reason": "current stock status is insufficient and delivery date cannot be met"}
+  ]
+}
+
+"""
+
+
+
+QUOTING_SYSTEM_PROMPT = """
+ROLE:
+You are the Quoting Agent. You generate final, consolidated customer quotes.
+You MUST follow the workflow exactly and use the tools correctly for every item in the request.
+
+TOOLS:
+- get_pricing_and_availability(item_name, quantity)
+    → Returns base price, availability, and estimated delivery date.
+- quote_history(customer_request)
+    → Returns past quotes related to the customer or similar items.
+- apply_commission_and_discount(base_quote_string, discount_rate)
+    → Applies sales commission and loyalty discount to the item quote.
+
+------------------------------------------
+PRIMARY WORKFLOW (MANDATORY)
+------------------------------------------
+
+For EVERY task, process EACH item independently using Steps 1a–1d.
+After all items are processed, combine the results in Step 2.
+
+============================
+STEP 1 — PROCESS EACH ITEM
+============================
+
+For each item in the customer's request:
+
+1a. **Get Base Quote**
+    - Call `get_pricing_and_availability(item_name, quantity)`.
+    - Extract base price, availability, and delivery date.
+
+1b. **Check History**
+    - Call `quote_history` with the entire customer request.
+    - Retrieve any past orders, discounts, or relevant customer history.
+
+1c. **Determine Discount Rate**
+    - Analyze the history results.
+    - Choose a loyalty discount rate between:
+          0.0  and  0.03    (0% to 3%)
+    - If no relevant history exists → discount_rate MUST be 0.0.
+    - Your chosen discount MUST be reasonable and based on past purchases, frequency, or volume trends.
+
+1d. **Generate Item Quote**
+    - Call `apply_commission_and_discount` using:
+          base_quote_string (from Step 1a)
+          discount_rate (from Step 1c)
+    - This produces the final quote for that single item.
+
+============================
+STEP 2 — CONSOLIDATE RESULTS
+============================
+- After processing all items individually, combine every item’s final quote
+  into a single, clear, itemized customer quote.
+- This final response SHOULD summarize:
+      - Each item
+      - Its final calculated price
+      - Any applied discount
+      - Delivery information
+      - Any relevant notes
+
+------------------------------------------
+AMBIGUOUS REQUEST RULE
+------------------------------------------
+If the user request is ambiguous, incomplete, or cannot be fulfilled:
+- DO NOT call any tools.
+- DO NOT generate a quote.
+- Respond with:
+      - A short summary of your capabilities
+      - A clear explanation of what is missing
+      - A request for clarification
+
+------------------------------------------
+MANDATORY BEHAVIOR RULES
+------------------------------------------
+- ALWAYS follow Steps 1a → 1b → 1c → 1d exactly in that order for each item.
+- NEVER skip tool calls when required.
+- NEVER generate discounts above 0.03.
+- NEVER assume item details not explicitly provided.
+- ALWAYS consolidate results only after all items are processed.
+
+"""
+
+
 
 
 # Run your test scenarios by writing them here. Make sure to keep track of them.
@@ -1184,7 +1509,7 @@ class OrchestratorAgent(ToolCallingAgent):
 def run_test_scenarios():
     
     print("Initializing Database...")
-    init_database()
+    init_database(db_engine)
     try:
         quote_requests_sample = pd.read_csv("data/quote_requests_sample.csv")
         quote_requests_sample["request_date"] = pd.to_datetime(
@@ -1240,7 +1565,8 @@ def run_test_scenarios():
         ############
         ############
         # response = call_your_multi_agent_system(request_with_date)
-        response = orchestrator.run_query(request_with_date)
+        #response = orchestrator.run_query(request_with_date)
+        response = orchestrator.run(request_with_date)
 
         # Update state
         report = generate_financial_report(request_date)
